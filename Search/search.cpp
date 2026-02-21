@@ -125,6 +125,10 @@ int Search::quiescenceSearch(int alpha, int beta) {
         Chessboard::communicate();
     }
 
+    if (Chessboard::stopped) {
+        return 0;
+    }
+
     Chessboard::threadStats[Chessboard::threadId].nodes++;
     
     if (ply > maxPly - 1) {
@@ -216,6 +220,10 @@ int Search::negamax(int alpha, int beta, int depth, int excludedMove) {
 
     if ((Chessboard::threadStats[Chessboard::threadId].nodes & 2047) == 0) {
         Chessboard::communicate();
+    }
+
+    if (Chessboard::stopped) {
+        return 0;
     }
 
     if (depth == 0) {
@@ -460,6 +468,14 @@ void Search::searchPosition(int depth, int threadId) {
     memset(pvTable, 0, sizeof(pvTable));
     memset(pvLength, 0, sizeof(pvLength));
     
+    int fallbackMove = 0;
+    moves initialMoves[1];
+    Chessboard::generateMoves(initialMoves);
+    if (initialMoves->count > 0) {
+        Move::sortMoves(initialMoves, 0);
+        fallbackMove = initialMoves->moves[0];
+    }
+    
     int alpha = -infinity;
     int beta = infinity;
 
@@ -518,12 +534,24 @@ void Search::searchPosition(int depth, int threadId) {
                 std::cout << std::endl;
             }
         }
+
+        if (Chessboard::timeSet) {
+            int elapsed = Chessboard::getTimeMs() - start;
+            if (elapsed * 2 > Chessboard::optTime) {
+                break;
+            }
+        }
     }
 
     if (threadId == 0) {
         if (pvTable[0][0]) {
             std::cout << "bestmove ";
             Move::printMove(pvTable[0][0]);
+            std::cout << std::endl;
+        }
+        else if (fallbackMove) {
+            std::cout << "bestmove ";
+            Move::printMove(fallbackMove);
             std::cout << std::endl;
         }
         else {

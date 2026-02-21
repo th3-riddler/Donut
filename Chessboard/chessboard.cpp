@@ -48,6 +48,8 @@ int Chessboard::inc = 0;
 int Chessboard::startTime = 0;
 int Chessboard::stopTime = 0;
 int Chessboard::timeSet = 0;
+int Chessboard::optTime = 0;
+int Chessboard::maxTime = 0;
 std::atomic<bool> Chessboard::stopped{false};
 thread_local BitBoard Chessboard::bitboard;
 Chessboard::ThreadStats Chessboard::threadStats[256];
@@ -1196,21 +1198,22 @@ void Chessboard::parseGo(char *command) {
     if (time != -1) {
         timeSet = true;
 
-        time /= movesToGo;
-
-        time -= 50;
-
-        if (time < 0) {
-
-            time = 0;
-
-            inc -= 50;
-
-            if (inc < 0) { inc = 1; }
-        }
-
-        stopTime = startTime + time + inc;
-
+        int divider = (movesToGo != 30) ? movesToGo : 40;
+        int moveOverhead = 40;
+        
+        optTime = time / divider + (inc * 3 / 4) - moveOverhead;
+        maxTime = time / 5 + inc - moveOverhead;
+        
+        int timeRemaining = time - moveOverhead;
+        if (timeRemaining < 1) { timeRemaining = 1; }
+        
+        if (optTime < 1) { optTime = 1; }
+        if (maxTime < 1) { maxTime = 1; }
+        
+        if (optTime > timeRemaining) { optTime = timeRemaining; }
+        if (maxTime > timeRemaining) { maxTime = timeRemaining; }
+        
+        stopTime = startTime + maxTime;
     }
 
     if (depth == -1) {
@@ -1282,6 +1285,8 @@ void Chessboard::readInput() {
         while (bytes < 0);
 
         if (bytes == 0) {
+            quit = true;
+            stopped = true;
             return; // EOF
         }
 
@@ -1345,6 +1350,8 @@ void Chessboard::uciLoop() {
 
         if(!fgets(input, 2000, stdin)) {
             if (feof(stdin)) {
+                quit = true;
+                stopped = true;
                 for (auto t : threads) {
                     {
                         std::unique_lock<std::mutex> lock(t->mutex);
@@ -1388,6 +1395,8 @@ void Chessboard::uciLoop() {
         }
 
         else if (strncmp(input, "quit", 4) == 0) {
+            quit = true;
+            stopped = true;
             for (auto t : threads) {
                 {
                     std::unique_lock<std::mutex> lock(t->mutex);

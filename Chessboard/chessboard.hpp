@@ -130,6 +130,9 @@ class Chessboard {
                 return -1;
         }
         static int startTime;
+        static int timeSet;
+        static int optTime;
+        static int maxTime;
     private:
         static bool quit;
         static int movesToGo;
@@ -138,7 +141,6 @@ class Chessboard {
         static int inc;
         
         static int stopTime;
-        static int timeSet;
 
         enum { wk = 1, wq = 2, bk = 4, bq = 8 };
 
