@@ -41,6 +41,9 @@ class Search {
         static thread_local bool scorePv;
         static thread_local int fifty;
 
+        static thread_local int playedMoves[maxPly];
+        static thread_local int counterMoves[12][64];
+
         static int hashEntries;
 
         static const int fullDepthMoves;

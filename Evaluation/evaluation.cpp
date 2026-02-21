@@ -139,11 +139,7 @@ int Evaluation::scoreMove(int move) {
     }
 
     if(getMoveCapture(move) != 13) {
-        if (Evaluation::see(move) >= 0) {
-            return mvvLva[getMovePiece(move)][getMoveCapture(move)] + 10000;
-        } else {
-            return mvvLva[getMovePiece(move)][getMoveCapture(move)] + 5000;
-        }
+        return mvvLva[getMovePiece(move)][getMoveCapture(move)] + 10000;
     }
     else {
         if (Search::killerMoves[0][Search::ply] == move) {
@@ -153,6 +149,12 @@ int Evaluation::scoreMove(int move) {
             return 8000;
         }
         else {
+            if (Search::ply > 0 && Search::playedMoves[Search::ply - 1] != 0) {
+                int prevMove = Search::playedMoves[Search::ply - 1];
+                if (move == Search::counterMoves[getMovePiece(prevMove)][getMoveTarget(prevMove)]) {
+                    return 7500;
+                }
+            }
             return Search::historyMoves[getMovePiece(move)][getMoveTarget(move)];
         }
     }

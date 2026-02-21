@@ -38,7 +38,11 @@ class Chessboard {
 
         static Reader::Book book;
         static thread_local BitBoard bitboard;
-        static thread_local uint64_t nodes;
+        struct alignas(64) ThreadStats {
+            uint64_t nodes;
+        };
+        static ThreadStats threadStats[256];
+        static uint64_t getNodes();
         static std::atomic<bool> stopped;
 
         static bool useBook;

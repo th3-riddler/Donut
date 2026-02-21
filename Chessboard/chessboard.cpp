@@ -50,7 +50,15 @@ int Chessboard::stopTime = 0;
 int Chessboard::timeSet = 0;
 std::atomic<bool> Chessboard::stopped{false};
 thread_local BitBoard Chessboard::bitboard;
-thread_local uint64_t Chessboard::nodes;
+Chessboard::ThreadStats Chessboard::threadStats[256];
+
+uint64_t Chessboard::getNodes() {
+    uint64_t sum = 0;
+    for (int i = 0; i < threadCount; i++) {
+        sum += threadStats[i].nodes;
+    }
+    return sum;
+}
 
 uint64_t Chessboard::pieceKeys[12][64];
 uint64_t Chessboard::enPassantKeys[64];
@@ -986,7 +994,7 @@ int Chessboard::getTimeMs() {
 
 inline void Chessboard::perftDriver(int depth) {
     if (depth == 0) {
-        nodes++;
+        threadStats[threadId].nodes++;
         return;
     }
 
@@ -1033,11 +1041,11 @@ void Chessboard::perftTest(int depth) {
             continue; 
         }
 
-        long commulativeNodes = nodes;
+        long commulativeNodes = getNodes();
         
         perftDriver(depth - 1);
 
-        long oldNodes = nodes - commulativeNodes;
+        long oldNodes = getNodes() - commulativeNodes;
 
         takeBack();
 
@@ -1047,7 +1055,7 @@ void Chessboard::perftTest(int depth) {
     }
     std::cout << std::endl;
     std::cout << "  Depth: " << depth << std::endl <<
-                 "  Nodes: " << nodes << std::endl <<
+                 "  Nodes: " << getNodes() << std::endl <<
                  "  Time: " << getTimeMs() - start << "ms" << std::endl << std::endl;
 }
 
@@ -1296,11 +1304,11 @@ void Chessboard::readInput() {
 }
 
 void Chessboard::communicate() {
-    if (timeSet == true && getTimeMs() > stopTime) {
-        stopped = true;
-    }
-
     if (threadId == 0) {
+        if (timeSet == true && getTimeMs() > stopTime) {
+            stopped = true;
+        }
+
         readInput();
     }
 }

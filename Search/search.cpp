@@ -8,6 +8,8 @@ thread_local int Search::killerMoves[2][64];
 thread_local int Search::historyMoves[12][64];
 thread_local int Search::pvLength[64];
 thread_local int Search::pvTable[64][64];
+thread_local int Search::playedMoves[maxPly];
+thread_local int Search::counterMoves[12][64];
 thread_local bool Search::followPv;
 thread_local bool Search::scorePv;
 const int Search::fullDepthMoves = 4;
@@ -119,11 +121,11 @@ inline bool Search::isRepetition() {
 
 int Search::quiescenceSearch(int alpha, int beta) {
 
-    if ((Chessboard::nodes & 2047) == 0) {
+    if ((Chessboard::threadStats[Chessboard::threadId].nodes & 2047) == 0) {
         Chessboard::communicate();
     }
 
-    Chessboard::nodes++;
+    Chessboard::threadStats[Chessboard::threadId].nodes++;
     
     if (ply > maxPly - 1) {
         return Evaluation::evaluate();
@@ -147,7 +149,6 @@ int Search::quiescenceSearch(int alpha, int beta) {
     Move::sortMoves(moveList, 0);
 
     for (int count = 0; count < moveList->count; count++) {
-        // SEE Pruning in Quiescence Search
         if (Evaluation::see(moveList->moves[count]) < 0) {
             continue;
         }
@@ -213,7 +214,7 @@ int Search::negamax(int alpha, int beta, int depth, int excludedMove) {
         return score;
     }
 
-    if ((Chessboard::nodes & 2047) == 0) {
+    if ((Chessboard::threadStats[Chessboard::threadId].nodes & 2047) == 0) {
         Chessboard::communicate();
     }
 
@@ -225,7 +226,7 @@ int Search::negamax(int alpha, int beta, int depth, int excludedMove) {
         return Evaluation::evaluate();
     }
 
-    Chessboard::nodes++;
+    Chessboard::threadStats[Chessboard::threadId].nodes++;
 
     int inCheck = Chessboard::isSquareAttacked(Chessboard::getLSBIndex((Chessboard::bitboard.sideToMove == Chessboard::white ? 
                                                                         Chessboard::bitboard.bitboards[Chessboard::K] : Chessboard::bitboard.bitboards[Chessboard::k])), 
@@ -353,6 +354,7 @@ int Search::negamax(int alpha, int beta, int depth, int excludedMove) {
         }
 
         legalMoves++;
+        playedMoves[ply] = moveList->moves[count];
 
         if (movesSearched == 0) {
             int moveExtension = (moveList->moves[count] == bestMove) ? extension : 0;
@@ -414,6 +416,10 @@ int Search::negamax(int alpha, int beta, int depth, int excludedMove) {
                 if (getMoveCapture(moveList->moves[count]) == 13) {
                     killerMoves[1][ply] = killerMoves[0][ply];
                     killerMoves[0][ply] = moveList->moves[count];
+                    if (ply > 0 && playedMoves[ply - 1] != 0) {
+                        int prevMove = playedMoves[ply - 1];
+                        counterMoves[getMovePiece(prevMove)][getMoveTarget(prevMove)] = moveList->moves[count];
+                    }
                 }
                 return beta;
             }
@@ -440,13 +446,17 @@ int Search::negamax(int alpha, int beta, int depth, int excludedMove) {
 void Search::searchPosition(int depth, int threadId) {
     int start = Chessboard::getTimeMs();
     int score = 0;
-    Chessboard::nodes = 0;
+    for (int i = 0; i < Chessboard::threadCount; i++) {
+        Chessboard::threadStats[i].nodes = 0;
+    }
     Chessboard::stopped = false;
     followPv = false;
     scorePv = false;
 
     memset(killerMoves, 0, sizeof(killerMoves));
     memset(historyMoves, 0, sizeof(historyMoves));
+    memset(playedMoves, 0, sizeof(playedMoves));
+    memset(counterMoves, 0, sizeof(counterMoves));
     memset(pvTable, 0, sizeof(pvTable));
     memset(pvLength, 0, sizeof(pvLength));
     
@@ -492,13 +502,13 @@ void Search::searchPosition(int depth, int threadId) {
         if (pvLength[0]) {
             if (threadId == 0) {
                 if (score > -mateValue && score < -mateScore) {
-                    std::cout << "info score mate " << -(score + mateValue) / 2 - 1 << " depth " << currentDepth << " nodes " << Chessboard::nodes << " time " << Chessboard::getTimeMs() - start << " pv ";
+                    std::cout << "info score mate " << -(score + mateValue) / 2 - 1 << " depth " << currentDepth << " nodes " << Chessboard::getNodes() << " time " << Chessboard::getTimeMs() - start << " pv ";
                 }
                 else if (score > mateScore && score < mateValue) {
-                    std::cout << "info score mate " << (mateValue - score) / 2 + 1 << " depth " << currentDepth << " nodes " << Chessboard::nodes << " time " << Chessboard::getTimeMs() - start << " pv ";
+                    std::cout << "info score mate " << (mateValue - score) / 2 + 1 << " depth " << currentDepth << " nodes " << Chessboard::getNodes() << " time " << Chessboard::getTimeMs() - start << " pv ";
                 }
                 else {
-                    std::cout << "info score cp " << score << " depth " << currentDepth << " nodes " << Chessboard::nodes << " time " << Chessboard::getTimeMs() - Chessboard::startTime << " pv ";
+                    std::cout << "info score cp " << score << " depth " << currentDepth << " nodes " << Chessboard::getNodes() << " time " << Chessboard::getTimeMs() - Chessboard::startTime << " pv ";
                 }
 
                 for (int count = 0; count < pvLength[0]; count++) {
