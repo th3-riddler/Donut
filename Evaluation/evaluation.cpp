@@ -21,6 +21,102 @@ const int Evaluation::mvvLva[12][12] = {
 	100, 200, 300, 400, 500, 600,  100, 200, 300, 400, 500, 600
 };
 
+const int Evaluation::pieceValues[14] = {
+    // P, N, B, R, Q, K, p, n, b, r, q, k, empty, empty
+    100, 300, 300, 500, 900, 20000,
+    100, 300, 300, 500, 900, 20000,
+    0, 0
+};
+
+uint64_t Evaluation::getAttackers(int targetSquare, uint64_t occupied) {
+    uint64_t attackers = 0ULL;
+    
+    // White pawns attacking targetSquare
+    attackers |= Move::pawnAttacks[Chessboard::black][targetSquare] & Chessboard::bitboard.bitboards[Chessboard::P];
+    // Black pawns attacking targetSquare
+    attackers |= Move::pawnAttacks[Chessboard::white][targetSquare] & Chessboard::bitboard.bitboards[Chessboard::p];
+    
+    // Knights
+    attackers |= Move::knightAttacks[targetSquare] & (Chessboard::bitboard.bitboards[Chessboard::N] | Chessboard::bitboard.bitboards[Chessboard::n]);
+    
+    // Kings
+    attackers |= Move::kingAttacks[targetSquare] & (Chessboard::bitboard.bitboards[Chessboard::K] | Chessboard::bitboard.bitboards[Chessboard::k]);
+    
+    // Bishops and Queens (diagonal)
+    uint64_t bishopsQueens = Chessboard::bitboard.bitboards[Chessboard::B] | Chessboard::bitboard.bitboards[Chessboard::b] | Chessboard::bitboard.bitboards[Chessboard::Q] | Chessboard::bitboard.bitboards[Chessboard::q];
+    attackers |= Move::getBishopAttacks(targetSquare, occupied) & bishopsQueens;
+    
+    // Rooks and Queens (orthogonal)
+    uint64_t rooksQueens = Chessboard::bitboard.bitboards[Chessboard::R] | Chessboard::bitboard.bitboards[Chessboard::r] | Chessboard::bitboard.bitboards[Chessboard::Q] | Chessboard::bitboard.bitboards[Chessboard::q];
+    attackers |= Move::getRookAttacks(targetSquare, occupied) & rooksQueens;
+    
+    return attackers;
+}
+
+int Evaluation::getLeastValuableAttacker(uint64_t attackers, int side, int& pieceType) {
+    int startPiece = (side == Chessboard::white) ? Chessboard::P : Chessboard::p;
+    int endPiece = (side == Chessboard::white) ? Chessboard::K : Chessboard::k;
+    
+    for (int piece = startPiece; piece <= endPiece; piece++) {
+        uint64_t subset = attackers & Chessboard::bitboard.bitboards[piece];
+        if (subset) {
+            pieceType = piece;
+            return Chessboard::getLSBIndex(subset);
+        }
+    }
+    
+    return -1;
+}
+
+int Evaluation::see(int move) {
+    int targetSquare = getMoveTarget(move);
+    int startSquare = getMoveSource(move);
+    int capturedPiece = getMoveCapture(move);
+    int attackerPiece = getMovePiece(move);
+    int attackerColor = Chessboard::bitboard.sideToMove;
+    
+    int gain[32];
+    int depth = 0;
+    
+    gain[depth] = (capturedPiece == 13) ? 0 : pieceValues[capturedPiece];
+    
+    uint64_t occupied = Chessboard::bitboard.occupancies[Chessboard::both];
+    uint64_t currentAttackers = getAttackers(targetSquare, occupied);
+    
+    CLEAR_BIT(occupied, startSquare);
+    
+    attackerColor ^= 1;
+    
+    while (depth < 31) {
+        depth++;
+        
+        int nextAttackerSquare = getLeastValuableAttacker(currentAttackers, attackerColor, attackerPiece);
+        
+        if (nextAttackerSquare == -1) break;
+        
+        gain[depth] = pieceValues[attackerPiece] - gain[depth - 1];
+        
+        CLEAR_BIT(currentAttackers, nextAttackerSquare);
+        CLEAR_BIT(occupied, nextAttackerSquare);
+        
+        // Add X-Ray attackers. Make sure they are not the same square we just removed!
+        uint64_t bishopsQueens = Chessboard::bitboard.bitboards[Chessboard::B] | Chessboard::bitboard.bitboards[Chessboard::b] | Chessboard::bitboard.bitboards[Chessboard::Q] | Chessboard::bitboard.bitboards[Chessboard::q];
+        uint64_t rooksQueens = Chessboard::bitboard.bitboards[Chessboard::R] | Chessboard::bitboard.bitboards[Chessboard::r] | Chessboard::bitboard.bitboards[Chessboard::Q] | Chessboard::bitboard.bitboards[Chessboard::q];
+        
+        uint64_t xRayDiagonal = Move::getBishopAttacks(targetSquare, occupied) & bishopsQueens;
+        uint64_t xRayOrthogonal = Move::getRookAttacks(targetSquare, occupied) & rooksQueens;
+        
+        currentAttackers |= (xRayDiagonal | xRayOrthogonal) & occupied; // Solo pezzi ancora presenti!
+        
+        attackerColor ^= 1;
+    }
+    
+    while (--depth) {
+        gain[depth - 1] = -std::max(-gain[depth - 1], gain[depth]);
+    }
+    
+    return gain[0];
+}
 
 /*  =======================
          Move ordering
@@ -43,7 +139,11 @@ int Evaluation::scoreMove(int move) {
     }
 
     if(getMoveCapture(move) != 13) {
-        return mvvLva[getMovePiece(move)][getMoveCapture(move)] + 10000;
+        if (Evaluation::see(move) >= 0) {
+            return mvvLva[getMovePiece(move)][getMoveCapture(move)] + 10000;
+        } else {
+            return mvvLva[getMovePiece(move)][getMoveCapture(move)] + 5000;
+        }
     }
     else {
         if (Search::killerMoves[0][Search::ply] == move) {

@@ -2,25 +2,23 @@
 
 #include "search.hpp"
 
-int Search::ply;
+thread_local int Search::ply;
 
-int Search::killerMoves[2][64];
-int Search::historyMoves[12][64];
-int Search::pvLength[64];
-int Search::pvTable[64][64];
-bool Search::followPv;
-bool Search::scorePv;
+thread_local int Search::killerMoves[2][64];
+thread_local int Search::historyMoves[12][64];
+thread_local int Search::pvLength[64];
+thread_local int Search::pvTable[64][64];
+thread_local bool Search::followPv;
+thread_local bool Search::scorePv;
 const int Search::fullDepthMoves = 4;
 const int Search::reductionLimit = 3;
 int Search::hashEntries = 0;
 tt* Search::transpositionTable = NULL;
 
-uint64_t Search::repetitionTable[1000];
-int Search::repetitionIndex;
+thread_local uint64_t Search::repetitionTable[1000];
+thread_local int Search::repetitionIndex;
 
-int Search::fifty;
-
-Reader::BookMoves Search::bookMoves;
+thread_local int Search::fifty;
 
 inline void Search::enablePvScore(moves *moveList) {
     followPv = false;
@@ -149,6 +147,11 @@ int Search::quiescenceSearch(int alpha, int beta) {
     Move::sortMoves(moveList, 0);
 
     for (int count = 0; count < moveList->count; count++) {
+        // SEE Pruning in Quiescence Search
+        if (Evaluation::see(moveList->moves[count]) < 0) {
+            continue;
+        }
+
         copyBoard();
 
         ply++;
@@ -189,7 +192,7 @@ int Search::quiescenceSearch(int alpha, int beta) {
     return alpha;
 }
 
-int Search::negamax(int alpha, int beta, int depth) {
+int Search::negamax(int alpha, int beta, int depth, int excludedMove) {
 
     pvLength[ply] = ply;
 
@@ -263,7 +266,7 @@ int Search::negamax(int alpha, int beta, int depth) {
         Chessboard::hashKey ^= Chessboard::sideKey;
 
         // Search Moves with a reduced depth (depth - 1 - R) --> R is the reduction amount
-        score = -negamax(-beta, -beta + 1, depth - 1 - 2);
+        score = -negamax(-beta, -beta + 1, depth - 1 - 2, 0);
 
         ply--;
 
@@ -314,8 +317,25 @@ int Search::negamax(int alpha, int beta, int depth) {
     Move::sortMoves(moveList, bestMove);
 
     int movesSearched = 0;
+    int extension = 0;
+
+    // Singular Extension detection
+    if (depth >= 3 && excludedMove == 0 && !pvNode && bestMove != 0 && abs(beta) < mateScore) {
+        tt *hashEntry = &transpositionTable[Chessboard::hashKey % hashEntries];
+        if (hashEntry->hashKey == Chessboard::hashKey && hashEntry->depth >= depth - 3 && hashEntry->flags != hashFlagAlpha && abs(hashEntry->score) < mateScore) {
+            int singularBeta = hashEntry->score - depth * 2;
+            int singularDepth = (depth - 1) / 2;
+            int singularScore = negamax(singularBeta - 1, singularBeta, singularDepth, bestMove);
+            if (singularScore < singularBeta) {
+                extension = 1;
+            }
+        }
+    }
 
     for (int count = 0; count < moveList->count; count++) {
+        
+        if (moveList->moves[count] == excludedMove) continue;
+
         copyBoard();
 
         ply++;
@@ -334,12 +354,13 @@ int Search::negamax(int alpha, int beta, int depth) {
         legalMoves++;
 
         if (movesSearched == 0) {
-            score = -negamax(-beta, -alpha, depth - 1);
+            int moveExtension = (moveList->moves[count] == bestMove) ? extension : 0;
+            score = -negamax(-beta, -alpha, depth - 1 + moveExtension, 0);
         }
         else {
             // Late Move Reduction (LMR)
             if (movesSearched >= fullDepthMoves && depth >= reductionLimit && !inCheck && (getMoveCapture(moveList->moves[count]) == 13) && getMovePromoted(moveList->moves[count]) == 0) {
-                score = -negamax(-alpha - 1, -alpha, depth - 2);
+                score = -negamax(-alpha - 1, -alpha, depth - 2, 0);
             }
             else {
                 score = alpha + 1;
@@ -347,10 +368,10 @@ int Search::negamax(int alpha, int beta, int depth) {
             
             // Principal Variation Search (PVS)
             if (score > alpha) {
-                score = -negamax(-alpha - 1, -alpha, depth - 1);
+                score = -negamax(-alpha - 1, -alpha, depth - 1, 0);
             
                 if ((score > alpha) && (score < beta)) {
-                    score = -negamax(-beta, -alpha, depth - 1);
+                    score = -negamax(-beta, -alpha, depth - 1, 0);
                 }
             }
         }
@@ -386,7 +407,9 @@ int Search::negamax(int alpha, int beta, int depth) {
 
             // Fail hard beta-cutoff
             if (score >= beta) {
-                writeHashEntry(beta, bestMove, depth, hashFlagBeta);
+                if (excludedMove == 0) {
+                    writeHashEntry(beta, bestMove, depth, hashFlagBeta);
+                }
                 if (getMoveCapture(moveList->moves[count]) == 13) {
                     killerMoves[1][ply] = killerMoves[0][ply];
                     killerMoves[0][ply] = moveList->moves[count];
@@ -405,13 +428,15 @@ int Search::negamax(int alpha, int beta, int depth) {
         }
     }
 
-    writeHashEntry(alpha, bestMove, depth, hashFlag);
+    if (excludedMove == 0) {
+        writeHashEntry(alpha, bestMove, depth, hashFlag);
+    }
 
     // Node fails low
     return alpha;
 }
 
-void Search::searchPosition(int depth) {
+void Search::searchPosition(int depth, int threadId) {
     int start = Chessboard::getTimeMs();
     int score = 0;
     Chessboard::nodes = 0;
@@ -428,7 +453,7 @@ void Search::searchPosition(int depth) {
     int beta = infinity;
 
     if (Chessboard::useBook) {
-        bookMoves = Chessboard::book.GetBookMoves(Chessboard::polyKeyFromBoard());
+        Reader::BookMoves bookMoves = Chessboard::book.GetBookMoves(Chessboard::polyKeyFromBoard());
 
         if (bookMoves.size() > 0) {
             std::string move = Reader::ConvertBookMoveToUci(Reader::RandomBookMove(bookMoves));
@@ -436,7 +461,9 @@ void Search::searchPosition(int depth) {
             move = move == "e8h8" ? "e8g8" : move;
             move = move == "e1a1" ? "e1c1" : move;
             move = move == "e8a8" ? "e8c8" : move;
-            std::cout << "bestmove " << move << std::endl;
+            if (threadId == 0) {
+                std::cout << "bestmove " << move << std::endl;
+            }
             return;
         }
     }
@@ -462,31 +489,35 @@ void Search::searchPosition(int depth) {
         beta = score + 50;
 
         if (pvLength[0]) {
-            if (score > -mateValue && score < -mateScore) {
-                std::cout << "info score mate " << -(score + mateValue) / 2 - 1 << " depth " << currentDepth << " nodes " << Chessboard::nodes << " time " << Chessboard::getTimeMs() - start << " pv ";
-            }
-            else if (score > mateScore && score < mateValue) {
-                std::cout << "info score mate " << (mateValue - score) / 2 + 1 << " depth " << currentDepth << " nodes " << Chessboard::nodes << " time " << Chessboard::getTimeMs() - start << " pv ";
-            }
-            else {
-                std::cout << "info score cp " << score << " depth " << currentDepth << " nodes " << Chessboard::nodes << " time " << Chessboard::getTimeMs() - Chessboard::startTime << " pv ";
-            }
+            if (threadId == 0) {
+                if (score > -mateValue && score < -mateScore) {
+                    std::cout << "info score mate " << -(score + mateValue) / 2 - 1 << " depth " << currentDepth << " nodes " << Chessboard::nodes << " time " << Chessboard::getTimeMs() - start << " pv ";
+                }
+                else if (score > mateScore && score < mateValue) {
+                    std::cout << "info score mate " << (mateValue - score) / 2 + 1 << " depth " << currentDepth << " nodes " << Chessboard::nodes << " time " << Chessboard::getTimeMs() - start << " pv ";
+                }
+                else {
+                    std::cout << "info score cp " << score << " depth " << currentDepth << " nodes " << Chessboard::nodes << " time " << Chessboard::getTimeMs() - Chessboard::startTime << " pv ";
+                }
 
-            for (int count = 0; count < pvLength[0]; count++) {
-                Move::printMove(pvTable[0][count]);
-                std::cout << " ";
+                for (int count = 0; count < pvLength[0]; count++) {
+                    Move::printMove(pvTable[0][count]);
+                    std::cout << " ";
+                }
+                std::cout << std::endl;
             }
-            std::cout << std::endl;
         }
     }
 
-    if (pvTable[0][0]) {
-        std::cout << "bestmove ";
-        Move::printMove(pvTable[0][0]);
-        std::cout << std::endl;
-    }
-    else {
-        std::cout << "(none)" << std::endl;
+    if (threadId == 0) {
+        if (pvTable[0][0]) {
+            std::cout << "bestmove ";
+            Move::printMove(pvTable[0][0]);
+            std::cout << std::endl;
+        }
+        else {
+            std::cout << "(none)" << std::endl;
+        }
     }
     // std::cout << std::endl;
 }

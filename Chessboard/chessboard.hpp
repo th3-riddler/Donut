@@ -10,9 +10,13 @@
 #include <iostream>
 #include <stdlib.h>
 #include <iomanip>
-#include <unistd.h>
 #include <sys/time.h>
+#include <unistd.h>
 #include <sys/select.h>
+#include <atomic>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
 
 #include "../Move/move.hpp"
 #include "../Macros/bitboard.hpp"
@@ -33,9 +37,9 @@ class Chessboard {
         static void parseFEN(char *fen);
 
         static Reader::Book book;
-        static BitBoard bitboard;
-        static uint64_t nodes;
-        static bool stopped;
+        static thread_local BitBoard bitboard;
+        static thread_local uint64_t nodes;
+        static std::atomic<bool> stopped;
 
         static bool useBook;
 
@@ -44,7 +48,28 @@ class Chessboard {
         static uint64_t enPassantKeys[64];
         static uint64_t castleKeys[16];
         static uint64_t sideKey;
-        static uint64_t hashKey;
+        static thread_local uint64_t hashKey;
+        static thread_local int threadId;
+        
+        // Shared state for worker threads
+        static BitBoard rootBitboard;
+        static uint64_t rootHashKey;
+
+        struct Thread {
+            std::thread* thread;
+            std::condition_variable cv;
+            std::mutex mutex;
+            std::atomic<bool> isSearching;
+            std::atomic<bool> shouldQuit;
+            int depth;
+            int id;
+        };
+
+        static std::vector<Thread*> threads;
+        static int threadCount;
+        
+        static void copyState();
+        static void searchWorker(Thread* thread);
 
         static uint64_t polyKeyFromBoard();
         static const int polyPieces[12];

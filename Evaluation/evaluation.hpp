@@ -59,6 +59,11 @@ class Evaluation {
 
         static int nnuePieces[12];
         static int nnueSquares[64];
+        
+        static const int pieceValues[14];
+        static uint64_t getAttackers(int targetSquare, uint64_t occupied);
+        static int getLeastValuableAttacker(uint64_t attackers, int side, int& pieceType);
+        static int see(int move);
 
         enum { opening, endgame, middlegame };
         enum { PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING };

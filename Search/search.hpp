@@ -20,10 +20,10 @@ struct tt {
 
 class Search {
     public:
-        static int negamax(int alpha, int beta, int depth);
+        static int negamax(int alpha, int beta, int depth, int excludedMove = 0);
         static int quiescenceSearch(int alpha, int beta);
 
-        static void searchPosition(int depth);
+        static void searchPosition(int depth, int threadId = 0);
         static inline void enablePvScore(moves *moveList);
         static void clearTranspositionTable();
         static int readHashEntry(int alpha, int beta, int* bestMove, int depth);
@@ -31,17 +31,15 @@ class Search {
         static inline bool isRepetition();
         static void initHashTable(int mb);
 
-        static int ply;
+        static thread_local int ply;
 
-        static Reader::BookMoves bookMoves;
-
-        static int killerMoves[2][maxPly];
-        static int historyMoves[12][64];
-        static int pvLength[maxPly];
-        static int pvTable[maxPly][maxPly];
-        static bool followPv;
-        static bool scorePv;
-        static int fifty;
+        static thread_local int killerMoves[2][maxPly];
+        static thread_local int historyMoves[12][64];
+        static thread_local int pvLength[maxPly];
+        static thread_local int pvTable[maxPly][maxPly];
+        static thread_local bool followPv;
+        static thread_local bool scorePv;
+        static thread_local int fifty;
 
         static int hashEntries;
 
@@ -49,8 +47,8 @@ class Search {
         static const int reductionLimit;
         static tt *transpositionTable;
 
-        static int repetitionIndex;
-        static uint64_t repetitionTable[1000];
+        static thread_local int repetitionIndex;
+        static thread_local uint64_t repetitionTable[1000];
 };
 
 

@@ -48,18 +48,61 @@ int Chessboard::inc = 0;
 int Chessboard::startTime = 0;
 int Chessboard::stopTime = 0;
 int Chessboard::timeSet = 0;
-bool Chessboard::stopped = false;
-BitBoard Chessboard::bitboard;
-uint64_t Chessboard::nodes;
+std::atomic<bool> Chessboard::stopped{false};
+thread_local BitBoard Chessboard::bitboard;
+thread_local uint64_t Chessboard::nodes;
 
 uint64_t Chessboard::pieceKeys[12][64];
 uint64_t Chessboard::enPassantKeys[64];
 uint64_t Chessboard::castleKeys[16];
 uint64_t Chessboard::sideKey;
-uint64_t Chessboard::hashKey = 0ULL;
+thread_local uint64_t Chessboard::hashKey = 0ULL;
+thread_local int Chessboard::threadId = 0;
+BitBoard Chessboard::rootBitboard;
+uint64_t Chessboard::rootHashKey = 0ULL;
 
 Reader::Book Chessboard::book;
 bool Chessboard::useBook = true;
+
+std::vector<Chessboard::Thread*> Chessboard::threads;
+int Chessboard::threadCount = 1;
+
+void Chessboard::copyState() {
+    bitboard = rootBitboard;
+    hashKey = rootHashKey;
+
+    Search::fifty = 0;
+    Search::repetitionIndex = 0;
+    Search::ply = 0;
+
+    memset(Search::killerMoves, 0, sizeof(Search::killerMoves));
+    memset(Search::historyMoves, 0, sizeof(Search::historyMoves));
+    memset(Search::pvTable, 0, sizeof(Search::pvTable));
+    memset(Search::pvLength, 0, sizeof(Search::pvLength));
+}
+
+void Chessboard::searchWorker(Thread* thread) {
+    Chessboard::threadId = thread->id;
+    while (!thread->shouldQuit) {
+        {
+            std::unique_lock<std::mutex> lock(thread->mutex);
+            thread->cv.wait(lock, [thread]{ return thread->isSearching || thread->shouldQuit; });
+
+            if (thread->shouldQuit) {
+                break;
+            }
+        }
+
+        copyState();
+        Search::searchPosition(thread->depth, thread->id);
+
+        {
+            std::unique_lock<std::mutex> lock(thread->mutex);
+            thread->isSearching = false;
+        }
+        thread->cv.notify_one();
+    }
+}
 
 void Chessboard::init() {
 
@@ -1097,7 +1140,6 @@ void Chessboard::resetTimeControl() {
 }
 
 void Chessboard::parseGo(char *command) {
-
     resetTimeControl();
 
     int depth = -1;
@@ -1167,9 +1209,46 @@ void Chessboard::parseGo(char *command) {
         depth = 64;
     }
 
+    rootBitboard = bitboard;
+    rootHashKey = hashKey;
+
     // std::cout << "time: " << time << " inc: " << inc << " start: " << startTime << " stop: " << stopTime << " depth: " << depth << " timeset: " << timeSet << std::endl;
 
-    Search::searchPosition(depth);
+    // Wake up worker threads
+    for (int i = 0; i < threadCount - 1; i++) {
+        if (i >= (int)threads.size()) {
+            Thread* t = new Thread();
+            t->id = i + 1;
+            t->isSearching = false;
+            t->shouldQuit = false;
+            t->depth = depth;
+            t->thread = new std::thread(searchWorker, t);
+            threads.push_back(t);
+        }
+
+        Thread* t = threads[i];
+        
+        // Wait until previous search is effectively over
+        while (t->isSearching) {
+            std::this_thread::yield();
+        }
+        
+        std::unique_lock<std::mutex> lock(t->mutex);
+        t->depth = depth;
+        t->isSearching = true;
+        t->cv.notify_one();
+    }
+
+    // Master thread runs the main search
+    Search::searchPosition(depth, 0);
+
+    // Wait for all worker threads to finish
+    for (int i = 0; i < threadCount - 1; i++) {
+        Thread* t = threads[i];
+        while (t->isSearching) {
+            std::this_thread::yield();
+        }
+    }
 }
 
 int Chessboard::inputWaiting() {
@@ -1189,12 +1268,14 @@ void Chessboard::readInput() {
     char input[256] = "", *endc;
 
     if (inputWaiting()) {
-        stopped = true;
-
         do {
             bytes = read(fileno(stdin), input, 256);
         }
         while (bytes < 0);
+
+        if (bytes == 0) {
+            return; // EOF
+        }
 
         endc = strchr(input, '\n');
 
@@ -1205,10 +1286,11 @@ void Chessboard::readInput() {
         if (strlen(input) > 0) {
             if (!strncmp(input, "quit", 4)) {
                 quit = true;
+                stopped = true;
             }
-        }
-        else if (!strncmp(input, "stop", 4)) {
-            quit = true;
+            else if (!strncmp(input, "stop", 4)) {
+                stopped = true;
+            }
         }
     }
 }
@@ -1218,7 +1300,9 @@ void Chessboard::communicate() {
         stopped = true;
     }
 
-    readInput();
+    if (threadId == 0) {
+        readInput();
+    }
 }
 
 /*
@@ -1234,8 +1318,8 @@ void Chessboard::uciLoop() {
     int maxHash = 512;
     int mb = 64;
     int moveOverhead = 0;
-    int threads = 1;
-    int maxThreads = 1;
+    threadCount = 1;
+    int maxThreads = 256;
     std::string syzygyPath = "";
     bool uciShowWDL = false;
 
@@ -1252,6 +1336,22 @@ void Chessboard::uciLoop() {
         fflush(stdout);
 
         if(!fgets(input, 2000, stdin)) {
+            if (feof(stdin)) {
+                for (auto t : threads) {
+                    {
+                        std::unique_lock<std::mutex> lock(t->mutex);
+                        t->shouldQuit = true;
+                        t->cv.notify_one();
+                    }
+                    if (t->thread->joinable()) {
+                        t->thread->join();
+                    }
+                    delete t->thread;
+                    delete t;
+                }
+                threads.clear();
+                break;
+            }
             continue;
         }
 
@@ -1280,6 +1380,17 @@ void Chessboard::uciLoop() {
         }
 
         else if (strncmp(input, "quit", 4) == 0) {
+            for (auto t : threads) {
+                {
+                    std::unique_lock<std::mutex> lock(t->mutex);
+                    t->shouldQuit = true;
+                    t->cv.notify_one();
+                }
+                t->thread->join();
+                delete t->thread;
+                delete t;
+            }
+            threads.clear();
             break;
         }
 
@@ -1287,7 +1398,7 @@ void Chessboard::uciLoop() {
             std::cout << "id name Donut" << std::endl;
             std::cout << "id author Redux" << std::endl;
             std::cout << "option name Move Overhead type spin default " << moveOverhead << " min 0 max 0" << std::endl;
-            std::cout << "option name Threads type spin default " << threads << " min 1 max " << maxThreads << std::endl;
+            std::cout << "option name Threads type spin default " << threadCount << " min 1 max " << maxThreads << std::endl;
             std::cout << "option name Hash type spin default 64 min 4 max " << maxHash << std::endl;
             std::cout << "option name SyzygyPath type string default \"" << syzygyPath << "\"" << std::endl;
             std::cout << "option name UCI_ShowWDL type check default false" << std::endl;
@@ -1302,10 +1413,10 @@ void Chessboard::uciLoop() {
         }
 
         else if (strncmp(input, "setoption name Threads value ", 29) == 0) {
-            // threads = atoi(input + 29);
-            // if (threads < 1) { threads = 1; }
-            // if (threads > maxThreads) { threads = maxThreads; }
-            // std::cout << "info string Threads set to " << threads << std::endl;
+            threadCount = atoi(input + 29);
+            if (threadCount < 1) { threadCount = 1; }
+            if (threadCount > maxThreads) { threadCount = maxThreads; }
+            // std::cout << "info string Threads set to " << threadCount << std::endl;
             continue;
         }
 
@@ -1363,5 +1474,8 @@ void Chessboard::uciLoop() {
                 useBook = false;
             }
         } 
+        else if (strncmp(input, "d", 1) == 0) {
+            printBoard();
+        }
     }
 }
