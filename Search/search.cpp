@@ -320,7 +320,8 @@ int Search::negamax(int alpha, int beta, int depth, int excludedMove) {
     int extension = 0;
 
     // Singular Extension detection
-    if (depth >= 3 && excludedMove == 0 && !pvNode && bestMove != 0 && abs(beta) < mateScore) {
+    // Limitato a profondità avanzate (>= 8) ed esclusi i punteggi di matto in TT per tagliare i tempi morti
+    if (depth >= 8 && excludedMove == 0 && !pvNode && bestMove != 0 && abs(beta) < mateScore) {
         tt *hashEntry = &transpositionTable[Chessboard::hashKey % hashEntries];
         if (hashEntry->hashKey == Chessboard::hashKey && hashEntry->depth >= depth - 3 && hashEntry->flags != hashFlagAlpha && abs(hashEntry->score) < mateScore) {
             int singularBeta = hashEntry->score - depth * 2;
