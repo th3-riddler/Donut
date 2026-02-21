@@ -88,13 +88,14 @@ int Evaluation::see(int move) {
     attackerColor ^= 1;
     
     while (depth < 31) {
+        int previousAttacker = attackerPiece;
         depth++;
         
         int nextAttackerSquare = getLeastValuableAttacker(currentAttackers, attackerColor, attackerPiece);
         
         if (nextAttackerSquare == -1) break;
         
-        gain[depth] = pieceValues[attackerPiece] - gain[depth - 1];
+        gain[depth] = pieceValues[previousAttacker] - gain[depth - 1];
         
         CLEAR_BIT(currentAttackers, nextAttackerSquare);
         CLEAR_BIT(occupied, nextAttackerSquare);
