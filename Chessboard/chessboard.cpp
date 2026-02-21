@@ -1198,11 +1198,16 @@ void Chessboard::parseGo(char *command) {
     if (time != -1) {
         timeSet = true;
 
-        int divider = (movesToGo != 30) ? movesToGo : 40;
         int moveOverhead = 40;
         
-        optTime = time / divider + (inc * 3 / 4) - moveOverhead;
-        maxTime = time / 5 + inc - moveOverhead;
+        if (moveTime != -1) {
+            optTime = time;
+            maxTime = time;
+        } else {
+            int divider = (movesToGo != 30) ? movesToGo : 40;
+            optTime = time / divider + (inc * 3 / 4) - moveOverhead;
+            maxTime = time / 5 + inc - moveOverhead;
+        }
         
         int timeRemaining = time - moveOverhead;
         if (timeRemaining < 1) { timeRemaining = 1; }

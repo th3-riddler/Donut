@@ -537,8 +537,16 @@ void Search::searchPosition(int depth, int threadId) {
 
         if (Chessboard::timeSet) {
             int elapsed = Chessboard::getTimeMs() - start;
-            if (elapsed * 2 > Chessboard::optTime) {
-                break;
+            if (Chessboard::optTime == Chessboard::maxTime) {
+                // Se abbiamo un tempo fisso esatto (go movetime), niente overshoot predittivo rigido
+                if (elapsed > Chessboard::optTime) {
+                    break;
+                }
+            } else {
+                // Per le partite Tournament, previene il consumo del tempo raddoppiato per Depth incalcolabili
+                if (elapsed * 2 > Chessboard::optTime) {
+                    break;
+                }
             }
         }
     }
