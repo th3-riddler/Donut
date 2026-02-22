@@ -468,14 +468,6 @@ void Search::searchPosition(int depth, int threadId) {
     memset(pvTable, 0, sizeof(pvTable));
     memset(pvLength, 0, sizeof(pvLength));
     
-    int fallbackMove = 0;
-    moves initialMoves[1];
-    Chessboard::generateMoves(initialMoves);
-    if (initialMoves->count > 0) {
-        Move::sortMoves(initialMoves, 0);
-        fallbackMove = initialMoves->moves[0];
-    }
-    
     int alpha = -infinity;
     int beta = infinity;
 
@@ -498,7 +490,7 @@ void Search::searchPosition(int depth, int threadId) {
     // Iterative Deepening
     for (int currentDepth = 1; currentDepth <= depth; currentDepth++) {
         Chessboard::useBook = false;
-        if (Chessboard::stopped) {
+        if (currentDepth > 1 && Chessboard::stopped) {
             break;
         }
 
@@ -552,14 +544,11 @@ void Search::searchPosition(int depth, int threadId) {
     }
 
     if (threadId == 0) {
+        Chessboard::stopped = true; // Signal all worker threads to stop and prevent hangs
+        
         if (pvTable[0][0]) {
             std::cout << "bestmove ";
             Move::printMove(pvTable[0][0]);
-            std::cout << std::endl;
-        }
-        else if (fallbackMove) {
-            std::cout << "bestmove ";
-            Move::printMove(fallbackMove);
             std::cout << std::endl;
         }
         else {
