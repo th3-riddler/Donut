@@ -123,6 +123,7 @@ void Chessboard::init() {
 
     book.Load("cerebellum.bin");
 
+    Search::initLMRTable();
     Search::initHashTable(64); // Default value of 64MB
 
     bool debug = false;

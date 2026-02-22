@@ -11,11 +11,8 @@
 struct moves;
 
 struct tt {
-    uint64_t hashKey;
-    int depth;
-    int flags;
-    int score;
-    int bestMove;
+    uint64_t key;
+    uint64_t data;
 };
 
 class Search {
@@ -30,6 +27,8 @@ class Search {
         static void writeHashEntry(int score, int bestMove, int depth, int flag);
         static inline bool isRepetition();
         static void initHashTable(int mb);
+        static void initLMRTable();
+        static int lmrTable[64][64];
 
         static thread_local int ply;
 
@@ -43,6 +42,7 @@ class Search {
 
         static thread_local int playedMoves[maxPly];
         static thread_local int counterMoves[12][64];
+        static thread_local int followUpMoves[12][64][12][64];
 
         static int hashEntries;
 

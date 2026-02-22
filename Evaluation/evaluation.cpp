@@ -156,7 +156,16 @@ int Evaluation::scoreMove(int move) {
                     return 7500;
                 }
             }
-            return Search::historyMoves[getMovePiece(move)][getMoveTarget(move)];
+            
+            // Scrutinio combinato: History Table Normale + Follow-Up History Table
+            int historyScore = Search::historyMoves[getMovePiece(move)][getMoveTarget(move)];
+            
+            if (Search::ply > 1 && Search::playedMoves[Search::ply - 2] != 0) {
+                int prevPrevMove = Search::playedMoves[Search::ply - 2];
+                historyScore += Search::followUpMoves[getMovePiece(prevPrevMove)][getMoveTarget(prevPrevMove)][getMovePiece(move)][getMoveTarget(move)];
+            }
+            
+            return historyScore;
         }
     }
     return 0;

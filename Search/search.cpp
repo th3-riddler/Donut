@@ -1,4 +1,6 @@
 #include <iostream>
+#include <cmath>
+#include <algorithm>
 
 #include "search.hpp"
 
@@ -10,12 +12,15 @@ thread_local int Search::pvLength[64];
 thread_local int Search::pvTable[64][64];
 thread_local int Search::playedMoves[maxPly];
 thread_local int Search::counterMoves[12][64];
+thread_local int Search::followUpMoves[12][64][12][64];
 thread_local bool Search::followPv;
 thread_local bool Search::scorePv;
 const int Search::fullDepthMoves = 4;
 const int Search::reductionLimit = 3;
 int Search::hashEntries = 0;
 tt* Search::transpositionTable = NULL;
+
+int Search::lmrTable[64][64];
 
 thread_local uint64_t Search::repetitionTable[1000];
 thread_local int Search::repetitionIndex;
@@ -34,12 +39,21 @@ inline void Search::enablePvScore(moves *moveList) {
 }
 
 void Search::clearTranspositionTable() {
-    tt *hashEntry;
-    for (hashEntry = transpositionTable; hashEntry < transpositionTable + hashEntries; hashEntry++) {
-        hashEntry->hashKey = 0;
-        hashEntry->depth = 0;
-        hashEntry->flags = 0;
-        hashEntry->score = 0;
+    for (int hashEntry = 0; hashEntry < hashEntries; hashEntry++) {
+        transpositionTable[hashEntry].key = 0;
+        transpositionTable[hashEntry].data = 0;
+    }
+}
+
+void Search::initLMRTable() {
+    for (int depth = 0; depth < 64; depth++) {
+        for (int movesSearched = 0; movesSearched < 64; movesSearched++) {
+            if (depth > 0 && movesSearched > 0) {
+                Search::lmrTable[depth][movesSearched] = 1 + log(depth) * log(movesSearched) / 2.25;
+            } else {
+                Search::lmrTable[depth][movesSearched] = 0;
+            }
+        }
     }
 }
 
@@ -68,26 +82,31 @@ void Search::initHashTable(int mb) {
 
 int Search::readHashEntry(int alpha, int beta, int* bestMove, int depth) {
     tt *hashEntry = &transpositionTable[Chessboard::hashKey % hashEntries];
+    uint64_t read_data = hashEntry->data;
+    uint64_t read_key = hashEntry->key;
 
-    if (hashEntry->hashKey == Chessboard::hashKey) {
-        if (hashEntry->depth >= depth) {
+    if ((read_key ^ read_data) == Chessboard::hashKey) {
+        int retrieved_depth = (read_data >> 46) & 0xFF;
+        int retrieved_flags = (read_data >> 54) & 0xF;
+        int retrieved_score = ((int)((read_data >> 28) & 0x3FFFF)) - 65000;
+        *bestMove = (int)(read_data & 0xFFFFFFF);
 
-            int score = hashEntry->score;
+        if (retrieved_depth >= depth) {
+            int score = retrieved_score;
 
             if (score < -mateScore) { score += ply; }
             if (score > mateScore) { score -= ply; }
 
-            if (hashEntry->flags == hashFlagExact) {
+            if (retrieved_flags == hashFlagExact) {
                 return score;
             }
-            if ((hashEntry->flags == hashFlagAlpha) && (score <= alpha)) {
+            if ((retrieved_flags == hashFlagAlpha) && (score <= alpha)) {
                 return alpha;
             }
-            if ((hashEntry->flags == hashFlagBeta) && (score >= beta)) {
+            if ((retrieved_flags == hashFlagBeta) && (score >= beta)) {
                 return beta;
             }
         }
-        *bestMove = hashEntry->bestMove;
     }
 
     return noHashEntry;
@@ -99,11 +118,14 @@ void Search::writeHashEntry(int score, int bestMove, int depth, int flag) {
     if (score < -mateScore) { score -= ply; }
     if (score > mateScore) { score += ply; }
 
-    hashEntry->hashKey = Chessboard::hashKey;
-    hashEntry->score = score;
-    hashEntry->flags = flag;
-    hashEntry->depth = depth;
-    hashEntry->bestMove = bestMove;
+    uint64_t data = 0;
+    data |= (uint64_t)(bestMove & 0xFFFFFFF);
+    data |= ((uint64_t)((score + 65000) & 0x3FFFF)) << 28;
+    data |= ((uint64_t)(depth & 0xFF)) << 46;
+    data |= ((uint64_t)(flag & 0xF)) << 54;
+    
+    hashEntry->data = data;
+    hashEntry->key = Chessboard::hashKey ^ data;
 }
 
 
@@ -274,8 +296,10 @@ int Search::negamax(int alpha, int beta, int depth, int excludedMove) {
         Chessboard::bitboard.sideToMove ^= 1;
         Chessboard::hashKey ^= Chessboard::sideKey;
 
-        // Search Moves with a reduced depth (depth - 1 - R) --> R is the reduction amount
-        score = -negamax(-beta, -beta + 1, depth - 1 - 2, 0);
+        // Dynamic Null Move Pruning (Asymptotic Formula)
+        int R = 3 + depth / 6;
+        int reducedDepth = std::max(0, depth - 1 - R);
+        score = -negamax(-beta, -beta + 1, reducedDepth, 0);
 
         ply--;
 
@@ -332,12 +356,21 @@ int Search::negamax(int alpha, int beta, int depth, int excludedMove) {
     // Limitato a profondità avanzate (>= 8) ed esclusi i punteggi di matto in TT per tagliare i tempi morti
     if (depth >= 8 && excludedMove == 0 && !pvNode && bestMove != 0 && abs(beta) < mateScore) {
         tt *hashEntry = &transpositionTable[Chessboard::hashKey % hashEntries];
-        if (hashEntry->hashKey == Chessboard::hashKey && hashEntry->depth >= depth - 3 && hashEntry->flags != hashFlagAlpha && abs(hashEntry->score) < mateScore) {
-            int singularBeta = hashEntry->score - depth * 2;
-            int singularDepth = (depth - 1) / 2;
-            int singularScore = negamax(singularBeta - 1, singularBeta, singularDepth, bestMove);
-            if (singularScore < singularBeta) {
-                extension = 1;
+        uint64_t read_data = hashEntry->data;
+        uint64_t read_key = hashEntry->key;
+        
+        if ((read_key ^ read_data) == Chessboard::hashKey) {
+            int retrieved_depth = (read_data >> 46) & 0xFF;
+            int retrieved_flags = (read_data >> 54) & 0xF;
+            int retrieved_score = ((int)((read_data >> 28) & 0x3FFFF)) - 65000;
+            
+            if (retrieved_depth >= depth - 3 && retrieved_flags != hashFlagAlpha && abs(retrieved_score) < mateScore) {
+                int singularBeta = retrieved_score - depth * 2;
+                int singularDepth = (depth - 1) / 2;
+                int singularScore = negamax(singularBeta - 1, singularBeta, singularDepth, bestMove);
+                if (singularScore < singularBeta) {
+                    extension = 1;
+                }
             }
         }
     }
@@ -369,15 +402,17 @@ int Search::negamax(int alpha, int beta, int depth, int excludedMove) {
             score = -negamax(-beta, -alpha, depth - 1 + moveExtension, 0);
         }
         else {
-            // Late Move Reduction (LMR)
+            // Late Move Reduction (LMR) Table-Driven
             if (movesSearched >= fullDepthMoves && depth >= reductionLimit && !inCheck && (getMoveCapture(moveList->moves[count]) == 13) && getMovePromoted(moveList->moves[count]) == 0) {
-                score = -negamax(-alpha - 1, -alpha, depth - 2, 0);
+                int reduction = lmrTable[std::min(depth, 63)][std::min(movesSearched, 63)];
+                int reducedDepth = std::max(0, depth - 1 - reduction);
+                score = -negamax(-alpha - 1, -alpha, reducedDepth, 0);
             }
             else {
-                score = alpha + 1;
+                score = alpha + 1; // Forza il PVS
             }
             
-            // Principal Variation Search (PVS)
+            // Principal Variation Search (PVS) col check del re-search
             if (score > alpha) {
                 score = -negamax(-alpha - 1, -alpha, depth - 1, 0);
             
@@ -405,7 +440,14 @@ int Search::negamax(int alpha, int beta, int depth, int excludedMove) {
             bestMove = moveList->moves[count];
 
             if (getMoveCapture(moveList->moves[count]) == 13) {
-                historyMoves[getMovePiece(moveList->moves[count])][getMoveTarget(moveList->moves[count])] += depth;
+                // Aggiornamento Esponenziale History Table Normale (Square-Piece)
+                historyMoves[getMovePiece(moveList->moves[count])][getMoveTarget(moveList->moves[count])] += depth * depth;
+                
+                // Generazione della Memoria Lunga: Follow-Up History
+                if (ply > 1 && playedMoves[ply - 2] != 0) {
+                    int prevPrevMove = playedMoves[ply - 2];
+                    followUpMoves[getMovePiece(prevPrevMove)][getMoveTarget(prevPrevMove)][getMovePiece(moveList->moves[count])][getMoveTarget(moveList->moves[count])] += depth * depth;
+                }
             }
 
             alpha = score;
@@ -465,6 +507,7 @@ void Search::searchPosition(int depth, int threadId) {
     memset(historyMoves, 0, sizeof(historyMoves));
     memset(playedMoves, 0, sizeof(playedMoves));
     memset(counterMoves, 0, sizeof(counterMoves));
+    memset(followUpMoves, 0, sizeof(followUpMoves));
     memset(pvTable, 0, sizeof(pvTable));
     memset(pvLength, 0, sizeof(pvLength));
     
