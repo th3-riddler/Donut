@@ -20,15 +20,16 @@ It uses the [Negamax Algorithm](https://en.wikipedia.org/wiki/Negamax) along wit
 More specifically, Donut implements:
 - [Opening Book](https://www.chessprogramming.org/Opening_Book)
 - [Iterative Deepening](https://www.chessprogramming.org/Iterative_Deepening)
+- [Multithreading (Lazy SMP)](https://www.chessprogramming.org/Lazy_SMP)
 - [Quiescence Search](https://www.chessprogramming.org/Quiescence_Search)
 - [Killer Heuristic](https://www.chessprogramming.org/Killer_Heuristic)
-- [History Heuristic](https://www.chessprogramming.org/History_Heuristic)
+- History Heuristics (Main, Capture, Countermove, and Follow-up)
 - [Principal Variation Search](https://www.chessprogramming.org/Principal_Variation_Search)
-- [Late Move Reductions](https://www.chessprogramming.org/Late_Move_Reductions)
-- [Null Move Pruning](https://www.chessprogramming.org/Null_Move_Pruning)
+- Table-driven [Late Move Reductions](https://www.chessprogramming.org/Late_Move_Reductions)
+- Dynamic [Null Move Pruning](https://www.chessprogramming.org/Null_Move_Pruning)
 - [Razoring](https://www.chessprogramming.org/Razoring)
 - [Aspiration Windows](https://www.chessprogramming.org/Aspiration_Windows)
-- [Transposition Table](https://www.chessprogramming.org/Transposition_Table)  
+- Lock-free [Transposition Table](https://www.chessprogramming.org/Transposition_Table)
 
 To `evaluate` the position, Donut uses Stockfish's NNUE in order to increase the performance:
 1. Big Net: **nn-b1a57edbea57.nnue**
