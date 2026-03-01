@@ -107,7 +107,8 @@ int Evaluation::see(int move) {
         uint64_t xRayDiagonal = Move::getBishopAttacks(targetSquare, occupied) & bishopsQueens;
         uint64_t xRayOrthogonal = Move::getRookAttacks(targetSquare, occupied) & rooksQueens;
         
-        currentAttackers |= (xRayDiagonal | xRayOrthogonal) & occupied; // Solo pezzi ancora presenti!
+        // Add new X-Ray attackers that were revealed by removing the last attacker
+        currentAttackers |= (xRayDiagonal | xRayOrthogonal) & occupied;
         
         attackerColor ^= 1;
     }
@@ -140,9 +141,11 @@ int Evaluation::scoreMove(int move) {
     }
 
     if(getMoveCapture(move) != 13) {
-        return mvvLva[getMovePiece(move)][getMoveCapture(move)] + 10000;
+        int capHistoryScore = Search::captureHistory[getMovePiece(move)][getMoveTarget(move)][getMoveCapture(move)];
+        return 10000 + mvvLva[getMovePiece(move)][getMoveCapture(move)] + capHistoryScore;
     }
     else {
+        // Quiet Moves
         if (Search::killerMoves[0][Search::ply] == move) {
             return 9000;
         }
@@ -150,10 +153,11 @@ int Evaluation::scoreMove(int move) {
             return 8000;
         }
         else {
+            int score = 0;
             if (Search::ply > 0 && Search::playedMoves[Search::ply - 1] != 0) {
                 int prevMove = Search::playedMoves[Search::ply - 1];
                 if (move == Search::counterMoves[getMovePiece(prevMove)][getMoveTarget(prevMove)]) {
-                    return 7500;
+                    score += 7500;
                 }
             }
             
@@ -165,7 +169,7 @@ int Evaluation::scoreMove(int move) {
                 historyScore += Search::followUpMoves[getMovePiece(prevPrevMove)][getMoveTarget(prevPrevMove)][getMovePiece(move)][getMoveTarget(move)];
             }
             
-            return historyScore;
+            return score + historyScore;
         }
     }
     return 0;
@@ -211,5 +215,66 @@ int Evaluation::evaluate() {
     // std::cout << "Fifty: " << Search::fifty << std::endl;
     bool side = Chessboard::bitboard.sideToMove ^ 1;
     // std::cout << "Score: " << Stockfish::Probe::eval(pieces, squares, pieceAmount, side, Search::fifty) << std::endl;
-    return evaluate_nnue(pieces, squares, pieceAmount, side, Search::fifty);
+    int eval = evaluate_nnue(pieces, squares, pieceAmount, side, Search::fifty);
+
+    // Mop-up evaluation to force checkmates in won endgames
+    // Used to give gradients to otherwise flat evaluations when crushing the opponent
+    if (std::abs(eval) > 500 && pieceAmount <= 5) {
+        int winningSide = (eval > 0) ? Chessboard::bitboard.sideToMove : (Chessboard::bitboard.sideToMove ^ 1);
+        int losingSide = winningSide ^ 1;
+
+        int winningKingPos = Chessboard::getLSBIndex(winningSide == Chessboard::white ? Chessboard::bitboard.bitboards[Chessboard::K] : Chessboard::bitboard.bitboards[Chessboard::k]);
+        int losingKingPos = Chessboard::getLSBIndex(losingSide == Chessboard::white ? Chessboard::bitboard.bitboards[Chessboard::K] : Chessboard::bitboard.bitboards[Chessboard::k]);
+
+        int wRank = winningKingPos / 8;
+        int wFile = winningKingPos % 8;
+        int lRank = losingKingPos / 8;
+        int lFile = losingKingPos % 8;
+
+        bool hasBishop = Chessboard::bitboard.bitboards[winningSide == Chessboard::white ? Chessboard::B : Chessboard::b] != 0;
+        bool hasKnight = Chessboard::bitboard.bitboards[winningSide == Chessboard::white ? Chessboard::N : Chessboard::n] != 0;
+        bool isKBNvK = hasBishop && hasKnight && pieceAmount == 4;
+
+        int mopUpScore = 0;
+
+        // 1. Push losing king to the edges/corners (max 6 points * 300 = 1800) -- DISABLED FOR KBNvK TO PREVENT WRONG CORNER FLEEING
+        if (!isKBNvK) {
+            int centerDistanceX = std::max(3 - lFile, lFile - 4);
+            int centerDistanceY = std::max(3 - lRank, lRank - 4);
+            mopUpScore += (centerDistanceX + centerDistanceY) * 300;
+        }
+
+        // 2. Bring winning king closer to the losing king (max 14 points * 200 = 2800)
+        int manhattanDistance = std::abs(wRank - lRank) + std::abs(wFile - lFile);
+        mopUpScore += (14 - manhattanDistance) * 200;
+
+        // 3. KBNvK specific: Push losing king to the correct corner & proximity
+        if (isKBNvK) {
+            int bishopPos = Chessboard::getLSBIndex(Chessboard::bitboard.bitboards[winningSide == Chessboard::white ? Chessboard::B : Chessboard::b]);
+            bool isDarkBishop = ((bishopPos / 8) + (bishopPos % 8)) % 2 == 0;
+            
+            int distToA1 = lRank + lFile;
+            int distToH8 = (7 - lRank) + (7 - lFile);
+            int distToA8 = (7 - lRank) + lFile;
+            int distToH1 = lRank + (7 - lFile);
+            
+            int minCorrectDist = isDarkBishop ? std::min(distToA1, distToH8) : std::min(distToA8, distToH1);
+            
+            int centerDistanceX = std::max(3 - lFile, lFile - 4);
+            int centerDistanceY = std::max(3 - lRank, lRank - 4);
+            int centerDist = centerDistanceX + centerDistanceY;
+
+            mopUpScore += centerDist * 100;
+            mopUpScore += (14 - minCorrectDist) * 1000;
+        }
+
+        // Apply bonus to the winning side, increasing the overall eval out of normal bounds
+        if (eval > 0) {
+            eval += 2000 + mopUpScore;
+        } else {
+            eval -= 2000 + mopUpScore;
+        }
+    }
+
+    return eval;
 }

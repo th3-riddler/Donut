@@ -13,6 +13,7 @@ thread_local int Search::pvTable[64][64];
 thread_local int Search::playedMoves[maxPly];
 thread_local int Search::counterMoves[12][64];
 thread_local int Search::followUpMoves[12][64][12][64];
+thread_local int Search::captureHistory[12][64][14];
 thread_local bool Search::followPv;
 thread_local bool Search::scorePv;
 const int Search::fullDepthMoves = 4;
@@ -157,6 +158,13 @@ int Search::quiescenceSearch(int alpha, int beta) {
         return Evaluation::evaluate();
     }
 
+    // Se mangi il re, questo nodo è invalido e cut-off.
+    // Dovrebbe già essere scremato da makeMove, ma come fail-safe o per i nodi root:
+    if (Chessboard::getNodes() > 0) {
+        int kingCount = Chessboard::countBits(Chessboard::bitboard.bitboards[Chessboard::K]) + Chessboard::countBits(Chessboard::bitboard.bitboards[Chessboard::k]);
+        if (kingCount != 2) return mateValue - ply; 
+    }
+
     int evaluation = Evaluation::evaluate();
 
     // Fail hard beta-cutoff
@@ -175,8 +183,11 @@ int Search::quiescenceSearch(int alpha, int beta) {
     Move::sortMoves(moveList, 0);
 
     for (int count = 0; count < moveList->count; count++) {
-        if (Evaluation::see(moveList->moves[count]) < 0) {
-            continue;
+        int captured = getMoveCapture(moveList->moves[count]);
+        if (captured != Chessboard::K && captured != Chessboard::k) {
+            if (Evaluation::see(moveList->moves[count]) < 0) {
+                continue;
+            }
         }
 
         copyBoard();
@@ -268,6 +279,10 @@ int Search::negamax(int alpha, int beta, int depth, int excludedMove) {
 
     int legalMoves = 0;
 
+    // Fail-safe per evitare di valutare su posizioni con re mancanti
+    int kingCount = Chessboard::countBits(Chessboard::bitboard.bitboards[Chessboard::K]) + Chessboard::countBits(Chessboard::bitboard.bitboards[Chessboard::k]);
+    if (kingCount != 2) return mateValue - ply;
+
     // Evaluation Pruning
     int staticEval = Evaluation::evaluate();
 
@@ -280,7 +295,7 @@ int Search::negamax(int alpha, int beta, int depth, int excludedMove) {
     }
 
     // Null Move Pruning
-    if (depth >= 3 && !inCheck && ply) {
+    if (depth >= 3 && !inCheck && ply && abs(staticEval) < 4000) {
         copyBoard();
 
         ply++;
@@ -317,7 +332,7 @@ int Search::negamax(int alpha, int beta, int depth, int excludedMove) {
     }
 
     // Razoring
-    if (!pvNode && !inCheck && depth <= 3) {
+    if (!pvNode && !inCheck && depth <= 3 && abs(staticEval) < 4000) {
         score = staticEval + 125;
 
         int newScore;
@@ -403,7 +418,7 @@ int Search::negamax(int alpha, int beta, int depth, int excludedMove) {
         }
         else {
             // Late Move Reduction (LMR) Table-Driven
-            if (movesSearched >= fullDepthMoves && depth >= reductionLimit && !inCheck && (getMoveCapture(moveList->moves[count]) == 13) && getMovePromoted(moveList->moves[count]) == 0) {
+            if (movesSearched >= fullDepthMoves && depth >= reductionLimit && !inCheck && (getMoveCapture(moveList->moves[count]) == 13) && getMovePromoted(moveList->moves[count]) == 0 && abs(staticEval) < 4000) {
                 int reduction = lmrTable[std::min(depth, 63)][std::min(movesSearched, 63)];
                 int reducedDepth = std::max(0, depth - 1 - reduction);
                 score = -negamax(-alpha - 1, -alpha, reducedDepth, 0);
@@ -470,6 +485,9 @@ int Search::negamax(int alpha, int beta, int depth, int excludedMove) {
                         int prevMove = playedMoves[ply - 1];
                         counterMoves[getMovePiece(prevMove)][getMoveTarget(prevMove)] = moveList->moves[count];
                     }
+                } else {
+                    // Capture History update for cutoffs
+                    captureHistory[getMovePiece(moveList->moves[count])][getMoveTarget(moveList->moves[count])][getMoveCapture(moveList->moves[count])] += depth * depth;
                 }
                 return beta;
             }
@@ -508,11 +526,13 @@ void Search::searchPosition(int depth, int threadId) {
     memset(playedMoves, 0, sizeof(playedMoves));
     memset(counterMoves, 0, sizeof(counterMoves));
     memset(followUpMoves, 0, sizeof(followUpMoves));
+    memset(captureHistory, 0, sizeof(captureHistory));
     memset(pvTable, 0, sizeof(pvTable));
     memset(pvLength, 0, sizeof(pvLength));
     
     int alpha = -infinity;
     int beta = infinity;
+    int bestMoveSoFar = 0;
 
     if (Chessboard::useBook) {
         Reader::BookMoves bookMoves = Chessboard::book.GetBookMoves(Chessboard::polyKeyFromBoard());
@@ -537,6 +557,19 @@ void Search::searchPosition(int depth, int threadId) {
             break;
         }
 
+        if (Chessboard::timeSet) {
+            int elapsed = Chessboard::getTimeMs() - start;
+            if (Chessboard::optTime == Chessboard::maxTime) {
+                if (elapsed > Chessboard::optTime) {
+                    break;
+                }
+            } else {
+                if (elapsed * 2 > Chessboard::optTime) {
+                    break;
+                }
+            }
+        }
+
         followPv = true;
 
         score = negamax(alpha, beta, currentDepth);
@@ -545,12 +578,14 @@ void Search::searchPosition(int depth, int threadId) {
         if ((score <= alpha) || (score >= beta)) {
             alpha = -infinity;
             beta = infinity;
+            currentDepth--;
             continue;
         }
         alpha = score - 50;
         beta = score + 50;
 
         if (pvLength[0]) {
+            bestMoveSoFar = pvTable[0][0];
             if (threadId == 0) {
                 if (score > -mateValue && score < -mateScore) {
                     std::cout << "info score mate " << -(score + mateValue) / 2 - 1 << " depth " << currentDepth << " nodes " << Chessboard::getNodes() << " time " << Chessboard::getTimeMs() - start << " pv ";
@@ -570,20 +605,7 @@ void Search::searchPosition(int depth, int threadId) {
             }
         }
 
-        if (Chessboard::timeSet) {
-            int elapsed = Chessboard::getTimeMs() - start;
-            if (Chessboard::optTime == Chessboard::maxTime) {
-                // Se abbiamo un tempo fisso esatto (go movetime), niente overshoot predittivo rigido
-                if (elapsed > Chessboard::optTime) {
-                    break;
-                }
-            } else {
-                // Per le partite Tournament, previene il consumo del tempo raddoppiato per Depth incalcolabili
-                if (elapsed * 2 > Chessboard::optTime) {
-                    break;
-                }
-            }
-        }
+        // End loop
     }
 
     if (threadId == 0) {
@@ -592,6 +614,11 @@ void Search::searchPosition(int depth, int threadId) {
         if (pvTable[0][0]) {
             std::cout << "bestmove ";
             Move::printMove(pvTable[0][0]);
+            std::cout << std::endl;
+        }
+        else if (bestMoveSoFar) {
+            std::cout << "bestmove ";
+            Move::printMove(bestMoveSoFar);
             std::cout << std::endl;
         }
         else {

@@ -1106,7 +1106,16 @@ void Chessboard::parsePosition(char *command) {
         }
         else {
             currentChar += 4;
-            parseFEN(currentChar);
+            
+            // Check if there are moves, if yes, we null-terminate the FEN string temporarily
+            char *movesPtr = strstr(command, "moves");
+            if (movesPtr != NULL) {
+                *(movesPtr - 1) = '\0'; // Replace the space before "moves" with null terminator
+                parseFEN(currentChar);
+                *(movesPtr - 1) = ' ';  // Restore the space
+            } else {
+                parseFEN(currentChar);
+            }
         }
     }
 
@@ -1196,28 +1205,30 @@ void Chessboard::parseGo(char *command) {
 
     depth = depth;
 
-    if (time != -1) {
+    if (time != -1 || moveTime != -1) {
         timeSet = true;
 
         int moveOverhead = 40;
         
         if (moveTime != -1) {
-            optTime = time;
-            maxTime = time;
+            optTime = moveTime;
+            maxTime = moveTime;
         } else {
             int divider = (movesToGo != 30) ? movesToGo : 40;
             optTime = time / divider + (inc * 3 / 4) - moveOverhead;
             maxTime = time / 5 + inc - moveOverhead;
         }
         
-        int timeRemaining = time - moveOverhead;
-        if (timeRemaining < 1) { timeRemaining = 1; }
-        
         if (optTime < 1) { optTime = 1; }
         if (maxTime < 1) { maxTime = 1; }
-        
-        if (optTime > timeRemaining) { optTime = timeRemaining; }
-        if (maxTime > timeRemaining) { maxTime = timeRemaining; }
+
+        if (time != -1 && moveTime == -1) {
+            int timeRemaining = time - moveOverhead;
+            if (timeRemaining < 1) { timeRemaining = 1; }
+            if (optTime > timeRemaining) { optTime = timeRemaining; }
+            if (maxTime > timeRemaining) { maxTime = timeRemaining; }
+        }
+
         
         stopTime = startTime + maxTime;
     }
