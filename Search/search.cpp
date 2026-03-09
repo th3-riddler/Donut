@@ -178,7 +178,7 @@ int Search::quiescenceSearch(int alpha, int beta) {
 
     
     moves moveList[1];
-    Chessboard::generateMoves(moveList);
+    Chessboard::generateMoves(moveList, true);
 
     Move::sortMoves(moveList, 0);
 
@@ -603,6 +603,17 @@ void Search::searchPosition(int depth, int threadId) {
                 }
                 std::cout << std::endl;
             }
+        }
+
+        if (score > mateScore && score < mateValue) {
+            break;
+        }
+
+        // --- Early exit for Forced Negative Checkmate ---
+        // Se non c'è modo di evitare il matto, giochiamo la mossa migliore 
+        // trovata subito senza perdere tempo prezioso di riflessione.
+        if (score < -mateScore && score > -mateValue) {
+            break;
         }
 
         // End loop

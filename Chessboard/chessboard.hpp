@@ -90,7 +90,7 @@ class Chessboard {
         static void printBitboards(uint64_t bitboard);
         static void resetBoard();
 
-        static void generateMoves(moves *moveList);
+        static void generateMoves(moves *moveList, bool capturesOnly = false);
         static int makeMove(int move, int moveFlag);
 
         static bool isSquareAttacked(int square, int side);
