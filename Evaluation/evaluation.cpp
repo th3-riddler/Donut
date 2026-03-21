@@ -177,45 +177,9 @@ int Evaluation::scoreMove(int move) {
 
 int Evaluation::evaluate() {
     
-    int pieceAmount = 0;
+    int pieceAmount = Chessboard::countBits(Chessboard::bitboard.occupancies[Chessboard::both]);
 
-    int pieces[32];
-    int squares[32];
-    int index = 0;
-
-    for (int square = 0; square < 64; square++) {
-        
-        for (int piece = Chessboard::P; piece <= Chessboard::k; piece++) {
-            if (!GET_BIT(Chessboard::bitboard.bitboards[piece], square)) {
-                continue;
-            }
-
-            pieces[index] = nnuePieces[piece];
-            squares[index] = square;
-            index++;
-            pieceAmount++;
-        }
-    }
-
-    // int scoree = (evaluate_nnue(Chessboard::bitboard.sideToMove, pieces, squares) * (100 - Search::fifty) / 100);
-    // std::cout << "Score Evalaute(): " << scoree << std::endl;
-
-    // print pieces and squares
-    // std::cout << sizeof(pieces) << std::endl;
-    // for (int i = 0; i < pieceAmount; i++) {
-    //     std::cout << pieces[i] << " ";
-    // }
-    // std::cout << std::endl;
-    // for (int i = 0; i < pieceAmount; i++) {
-    //     std::cout << squares[i] << " ";
-    // }
-    // std::cout << std::endl;
-    // std::cout << "Piece Amount: " << pieceAmount << std::endl;
-
-    // std::cout << "Fifty: " << Search::fifty << std::endl;
-    bool side = Chessboard::bitboard.sideToMove ^ 1;
-    // std::cout << "Score: " << Stockfish::Probe::eval(pieces, squares, pieceAmount, side, Search::fifty) << std::endl;
-    int eval = evaluate_nnue(pieces, squares, pieceAmount, side, Search::fifty);
+    int eval = NNUE::evaluate(Chessboard::bitboard.sideToMove == Chessboard::white ? true : false, Search::fifty);
 
     // Mop-up evaluation to force checkmates in won endgames
     // Used to give gradients to otherwise flat evaluations when crushing the opponent

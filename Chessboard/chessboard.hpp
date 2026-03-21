@@ -91,7 +91,17 @@ class Chessboard {
         static void resetBoard();
 
         static void generateMoves(moves *moveList, bool capturesOnly = false);
-        static int makeMove(int move, int moveFlag);
+        
+        struct UndoInfo {
+            int enPassantSquare;
+            int castlingRights;
+            int fifty;
+            uint64_t hashKey;
+            int capturedPiece;
+        };
+
+        static int makeMove(int move, int moveFlag, UndoInfo& undo);
+        static void unmakeMove(int move, const UndoInfo& undo);
 
         static bool isSquareAttacked(int square, int side);
 

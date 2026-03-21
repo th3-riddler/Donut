@@ -3,6 +3,8 @@
 #include <algorithm>
 
 #include "search.hpp"
+#include "../Evaluation/evaluation.hpp"
+#include "../nnueEval/nnueEval.hpp"
 
 thread_local int Search::ply;
 
@@ -190,14 +192,14 @@ int Search::quiescenceSearch(int alpha, int beta) {
             }
         }
 
-        copyBoard();
+        Chessboard::UndoInfo undo;
 
         ply++;
 
         repetitionIndex++;
         repetitionTable[repetitionIndex] = Chessboard::hashKey;
 
-        if(Chessboard::makeMove(moveList->moves[count], Chessboard::capturesOnly) == 0) {
+        if(Chessboard::makeMove(moveList->moves[count], Chessboard::capturesOnly, undo) == 0) {
             ply--;
 
             repetitionIndex--;
@@ -205,13 +207,17 @@ int Search::quiescenceSearch(int alpha, int beta) {
             continue;
         }
 
+        NNUE::push_move(moveList->moves[count], undo.capturedPiece);
+
         int score = -quiescenceSearch(-beta, -alpha);
+
+        NNUE::pop_move(moveList->moves[count]);
 
         ply--;
 
         repetitionIndex--;
 
-        takeBack();
+        Chessboard::unmakeMove(moveList->moves[count], undo);
 
         if (Chessboard::stopped) {
             return 0;
@@ -296,7 +302,9 @@ int Search::negamax(int alpha, int beta, int depth, int excludedMove) {
 
     // Null Move Pruning
     if (depth >= 3 && !inCheck && ply && abs(staticEval) < 4000) {
-        copyBoard();
+        Chessboard::UndoInfo nullUndo;
+        nullUndo.enPassantSquare = Chessboard::bitboard.enPassantSquare;
+        nullUndo.hashKey = Chessboard::hashKey;
 
         ply++;
 
@@ -311,16 +319,22 @@ int Search::negamax(int alpha, int beta, int depth, int excludedMove) {
         Chessboard::bitboard.sideToMove ^= 1;
         Chessboard::hashKey ^= Chessboard::sideKey;
 
+        NNUE::push_null_move();
+
         // Dynamic Null Move Pruning (Asymptotic Formula)
         int R = 3 + depth / 6;
         int reducedDepth = std::max(0, depth - 1 - R);
         score = -negamax(-beta, -beta + 1, reducedDepth, 0);
 
+        NNUE::pop_null_move();
+
         ply--;
 
         repetitionIndex--;
 
-        takeBack();
+        Chessboard::bitboard.sideToMove ^= 1;
+        Chessboard::bitboard.enPassantSquare = nullUndo.enPassantSquare;
+        Chessboard::hashKey = nullUndo.hashKey;
 
         if (Chessboard::stopped) {
             return 0;
@@ -394,20 +408,22 @@ int Search::negamax(int alpha, int beta, int depth, int excludedMove) {
         
         if (moveList->moves[count] == excludedMove) continue;
 
-        copyBoard();
+        Chessboard::UndoInfo undo;
 
         ply++;
 
         repetitionIndex++;
         repetitionTable[repetitionIndex] = Chessboard::hashKey;
 
-        if(Chessboard::makeMove(moveList->moves[count], Chessboard::allMoves) == 0) {
+        if(Chessboard::makeMove(moveList->moves[count], Chessboard::allMoves, undo) == 0) {
             ply--;
 
             repetitionIndex--;
 
             continue;
         }
+
+        NNUE::push_move(moveList->moves[count], undo.capturedPiece);
 
         legalMoves++;
         playedMoves[ply] = moveList->moves[count];
@@ -437,11 +453,13 @@ int Search::negamax(int alpha, int beta, int depth, int excludedMove) {
             }
         }
 
+        NNUE::pop_move(moveList->moves[count]);
+
         ply--;
 
         repetitionIndex--;
 
-        takeBack();
+        Chessboard::unmakeMove(moveList->moves[count], undo);
 
         if (Chessboard::stopped) {
             return 0;
@@ -549,6 +567,23 @@ void Search::searchPosition(int depth, int threadId) {
             return;
         }
     }
+
+    // Init NNUE state from scratch
+    int pieceAmount = 0;
+    int pieces[32];
+    int squares[32];
+    int index = 0;
+
+    for (int square = 0; square < 64; square++) {
+        for (int piece = Chessboard::P; piece <= Chessboard::k; piece++) {
+            if (!GET_BIT(Chessboard::bitboard.bitboards[piece], square)) continue;
+            pieces[index] = piece;
+            squares[index] = square;
+            index++;
+            pieceAmount++;
+        }
+    }
+    NNUE::set_state_from_pieces(pieces, squares, pieceAmount, Chessboard::bitboard.sideToMove == Chessboard::white ? true : false, Search::fifty);
 
     // Iterative Deepening
     for (int currentDepth = 1; currentDepth <= depth; currentDepth++) {

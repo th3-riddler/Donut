@@ -45,25 +45,7 @@
 
 #define getMoveCastling(move) (move & 0x4000000)
 
-#define copyBoard()                                                     \
-    uint64_t bitboardsCopy[12], occupanciesCopy[3];                     \
-    int sideCopy, enPassantSquareCopy, castlingRightsCopy, fiftyCopy;   \
-    memcpy(bitboardsCopy, Chessboard::bitboard.bitboards, 96);          \
-    memcpy(occupanciesCopy, Chessboard::bitboard.occupancies, 24);      \
-    sideCopy = Chessboard::bitboard.sideToMove;                         \
-    enPassantSquareCopy = Chessboard::bitboard.enPassantSquare;         \
-    castlingRightsCopy = Chessboard::bitboard.castlingRights;           \
-    fiftyCopy = Search::fifty;                                          \
-    uint64_t hashKeyCopy = Chessboard::hashKey;                         \
-
-#define takeBack()                                                      \
-    memcpy(Chessboard::bitboard.bitboards, bitboardsCopy, 96);          \
-    memcpy(Chessboard::bitboard.occupancies, occupanciesCopy, 24);      \
-    Chessboard::bitboard.sideToMove = sideCopy;                         \
-    Chessboard::bitboard.enPassantSquare = enPassantSquareCopy;         \
-    Chessboard::bitboard.castlingRights = castlingRightsCopy;           \
-    Search::fifty = fiftyCopy;                                          \
-    Chessboard::hashKey = hashKeyCopy;                                  \
+// Macros copyBoard and takeBack removed to use efficient unmakeMove
 
 #define maxPly 64
 
