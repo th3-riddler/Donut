@@ -294,7 +294,6 @@ int Search::negamax(int alpha, int beta, int depth, int excludedMove) {
 
     if (depth < 3 && !pvNode && !inCheck && abs(beta - 1) > -infinity + 100) {
         int evalMargin = 120 * depth;
-
         if (staticEval - evalMargin >= beta) {
             return staticEval - evalMargin;
         }
@@ -312,7 +311,7 @@ int Search::negamax(int alpha, int beta, int depth, int excludedMove) {
         repetitionTable[repetitionIndex] = Chessboard::hashKey;
 
         if (Chessboard::bitboard.enPassantSquare != Chessboard::noSquare) {
-            Chessboard::hashKey ^= Chessboard::enPassantKeys[Chessboard::bitboard.enPassantSquare];
+            Chessboard::hashKey ^= Chessboard::enPassantKeys[Chessboard::bitboard.enPassantSquare];                             
         }
         Chessboard::bitboard.enPassantSquare = Chessboard::noSquare;
 
@@ -583,6 +582,9 @@ void Search::searchPosition(int depth, int threadId) {
             pieceAmount++;
         }
     }
+    
+    // std::cout << "DEBUG pieceAmount: " << pieceAmount << std::endl;
+
     NNUE::set_state_from_pieces(pieces, squares, pieceAmount, Chessboard::bitboard.sideToMove == Chessboard::white ? true : false, Search::fifty);
 
     // Iterative Deepening
@@ -640,14 +642,7 @@ void Search::searchPosition(int depth, int threadId) {
             }
         }
 
-        if (score > mateScore && score < mateValue) {
-            break;
-        }
-
-        // --- Early exit for Forced Negative Checkmate ---
-        // Se non c'è modo di evitare il matto, giochiamo la mossa migliore 
-        // trovata subito senza perdere tempo prezioso di riflessione.
-        if (score < -mateScore && score > -mateValue) {
+        if (abs(score) > mateScore) {
             break;
         }
 

@@ -1105,6 +1105,35 @@ inline void Chessboard::perftDriver(int depth) {
     moves moveList[1];
     generateMoves(moveList);
 
+    moves capList[1];
+    generateMoves(capList, true);
+    
+    // Test capturesOnly parity
+    int filteredCapCount = 0;
+    for (int count = 0; count < moveList->count; count++) {
+        if (getMoveCapture(moveList->moves[count]) != 13) {
+            filteredCapCount++;
+            // Check if this move exists in capList
+            bool found = false;
+            for (int j = 0; j < capList->count; j++) {
+                if (moveList->moves[count] == capList->moves[j]) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                std::cout << "CAPTURE PARITY BUG! Generated capture not in capturesOnly list!" << std::endl;
+                exit(1);
+            }
+        }
+    }
+    
+    int actualCapCount = capList->count;
+    if (filteredCapCount != actualCapCount) {
+        std::cout << "CAPTURE PARITY BUG! counts mismatch: filtered=" << filteredCapCount << " capList=" << actualCapCount << std::endl;
+        exit(1);
+    }
+
     for (int moveCount = 0; moveCount < moveList->count; moveCount++) {
 
         UndoInfo undo;

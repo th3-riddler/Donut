@@ -2,6 +2,7 @@
 #include "../nnue/position.h"
 #include "../nnue/evaluate.h"
 #include "../Chessboard/chessboard.hpp"
+#include "../Search/search.hpp"
 #include "nnueEval.hpp"
 
 namespace NNUE {
@@ -26,8 +27,12 @@ namespace NNUE {
 
     void set_state_from_pieces(const int pieces[], const int squares[], int pieceAmount, bool side, int rule50) {
         nnuePly = 0;
+        
         int mappedPieces[32];
-        for (int i=0; i<pieceAmount; i++) mappedPieces[i] = pieceMapping[pieces[i]];
+        for (int i = 0; i < pieceAmount; i++) {
+            Stockfish::Piece pc = pieceMapping[pieces[i]];
+            mappedPieces[i] = pc;
+        }
         nnuePos.set(mappedPieces, squares, pieceAmount, side, rule50, &nnueStates[0]);
     }
 
@@ -53,6 +58,12 @@ namespace NNUE {
         st->accumulatorSmall.computed[Stockfish::WHITE] = false;
         st->accumulatorSmall.computed[Stockfish::BLACK] = false;
 
+        // Update nonPawnMaterial and rule50_count
+        st->rule50 = Search::fifty;
+        if (Stockfish::type_of(pieceMapping[piece]) == Stockfish::PAWN || capturedPiece != 13) {
+            st->rule50 = 0;
+        }
+        
         auto add_dirty = [&](Stockfish::Piece pc, Stockfish::Square from, Stockfish::Square to) {
             st->dirtyPiece.piece[st->dirtyPiece.dirty_num] = pc;
             st->dirtyPiece.from[st->dirtyPiece.dirty_num] = from;
@@ -72,11 +83,18 @@ namespace NNUE {
         }
         
         if (capturedPiece != 13) {
+            Stockfish::Piece sfCaptured = pieceMapping[capturedPiece];
+            if (Stockfish::type_of(sfCaptured) != Stockfish::PAWN && Stockfish::type_of(sfCaptured) != Stockfish::KING) {
+                st->nonPawnMaterial[Stockfish::color_of(sfCaptured)] -= Stockfish::PieceValue[sfCaptured];
+            }
             nnuePos.remove_piece(capSq);
         }
         
         if (promotedPiece) {
             Stockfish::Piece sfPromoted = pieceMapping[promotedPiece];
+            if (Stockfish::type_of(sfPromoted) != Stockfish::PAWN && Stockfish::type_of(sfPromoted) != Stockfish::KING) {
+                st->nonPawnMaterial[Stockfish::color_of(sfPromoted)] += Stockfish::PieceValue[sfPromoted];
+            }
             add_dirty(sfPiece, sfFrom, Stockfish::SQ_NONE);
             add_dirty(sfPromoted, Stockfish::SQ_NONE, sfTo);
             nnuePos.put_piece(sfPromoted, sfTo);
@@ -122,7 +140,7 @@ namespace NNUE {
                 nnuePos.put_piece(pc, from);
             }
         }
-        
+
         nnuePly--;
         nnuePos.st = &nnueStates[nnuePly];
         nnuePos.sideToMove = (nnuePos.sideToMove == Stockfish::WHITE ? Stockfish::BLACK : Stockfish::WHITE);
@@ -139,6 +157,7 @@ namespace NNUE {
         st->accumulatorBig.computed[Stockfish::BLACK] = false;
         st->accumulatorSmall.computed[Stockfish::WHITE] = false;
         st->accumulatorSmall.computed[Stockfish::BLACK] = false;
+        st->rule50 = Search::fifty;
         
         nnuePos.sideToMove = (nnuePos.sideToMove == Stockfish::WHITE ? Stockfish::BLACK : Stockfish::WHITE);
         nnuePos.st = st;
