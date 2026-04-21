@@ -611,6 +611,14 @@ void Search::searchPosition(int depth, int threadId) {
 
         score = negamax(alpha, beta, currentDepth);
 
+        if (Chessboard::stopped) {
+            break;
+        }
+
+        if (pvLength[0]) {
+            bestMoveSoFar = pvTable[0][0];
+        }
+
         // Aspiration Windows
         if ((score <= alpha) || (score >= beta)) {
             alpha = -infinity;
@@ -652,14 +660,14 @@ void Search::searchPosition(int depth, int threadId) {
     if (threadId == 0) {
         Chessboard::stopped = true; // Signal all worker threads to stop and prevent hangs
         
-        if (pvTable[0][0]) {
-            std::cout << "bestmove ";
-            Move::printMove(pvTable[0][0]);
-            std::cout << std::endl;
-        }
-        else if (bestMoveSoFar) {
+        if (bestMoveSoFar) {
             std::cout << "bestmove ";
             Move::printMove(bestMoveSoFar);
+            std::cout << std::endl;
+        }
+        else if (pvTable[0][0]) {
+            std::cout << "bestmove ";
+            Move::printMove(pvTable[0][0]);
             std::cout << std::endl;
         }
         else {
