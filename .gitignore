@@ -11,3 +11,4 @@ engineVersions/
 *.md
 *.log
 *.py
+*.sh
