@@ -29,6 +29,7 @@ thread_local uint64_t Search::repetitionTable[1000];
 thread_local int Search::repetitionIndex;
 
 thread_local int Search::fifty;
+thread_local int Search::staticEvals[maxPly];
 
 inline void Search::enablePvScore(moves *moveList) {
     followPv = false;
@@ -291,6 +292,8 @@ int Search::negamax(int alpha, int beta, int depth, int excludedMove) {
 
     // Evaluation Pruning
     int staticEval = Evaluation::evaluate();
+    staticEvals[ply] = staticEval;
+    bool improving = (ply >= 2 && staticEval > staticEvals[ply - 2]);
 
     if (depth < 3 && !pvNode && !inCheck && abs(beta - 1) > -infinity + 100) {
         int evalMargin = 120 * depth;
@@ -407,6 +410,8 @@ int Search::negamax(int alpha, int beta, int depth, int excludedMove) {
         
         if (moveList->moves[count] == excludedMove) continue;
 
+        bool isQuiet = (getMoveCapture(moveList->moves[count]) == 13) && (getMovePromoted(moveList->moves[count]) == 0);
+
         Chessboard::UndoInfo undo;
 
         ply++;
@@ -433,8 +438,15 @@ int Search::negamax(int alpha, int beta, int depth, int excludedMove) {
         }
         else {
             // Late Move Reduction (LMR) Table-Driven
-            if (movesSearched >= fullDepthMoves && depth >= reductionLimit && !inCheck && (getMoveCapture(moveList->moves[count]) == 13) && getMovePromoted(moveList->moves[count]) == 0 && abs(staticEval) < 4000) {
+            if (movesSearched >= fullDepthMoves && depth >= reductionLimit && !inCheck && isQuiet && abs(staticEval) < 4000) {
                 int reduction = lmrTable[std::min(depth, 63)][std::min(movesSearched, 63)];
+
+                // Reduce less in PV nodes (safe: PV nodes deserve deeper search)
+                if (pvNode) reduction--;
+
+                // Clamp reduction
+                reduction = std::max(0, std::min(reduction, depth - 2));
+
                 int reducedDepth = std::max(0, depth - 1 - reduction);
                 score = -negamax(-alpha - 1, -alpha, reducedDepth, 0);
             }
@@ -546,6 +558,7 @@ void Search::searchPosition(int depth, int threadId) {
     memset(captureHistory, 0, sizeof(captureHistory));
     memset(pvTable, 0, sizeof(pvTable));
     memset(pvLength, 0, sizeof(pvLength));
+    memset(staticEvals, 0, sizeof(staticEvals));
     
     int alpha = -infinity;
     int beta = infinity;

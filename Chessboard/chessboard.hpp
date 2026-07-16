@@ -122,20 +122,15 @@ class Chessboard {
 
         static const char* squareToCoordinates[64];
 
-        // Count bits within a bitboard
+        // Count bits within a bitboard (hardware intrinsic)
         static inline int countBits(uint64_t bitboard) {
-            int count = 0;
-            while (bitboard) {
-                count++;
-                bitboard &= bitboard - 1;
-            }
-            return count;
+            return __builtin_popcountll(bitboard);
         }
 
-        // Get the index of the least significant bit
+        // Get the index of the least significant bit (hardware intrinsic)
         static inline int getLSBIndex(uint64_t bitboard) {
             if (bitboard)
-                return countBits((bitboard & -bitboard) - 1);
+                return __builtin_ctzll(bitboard);
             else
                 return -1;
         }

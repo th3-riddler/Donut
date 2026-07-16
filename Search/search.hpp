@@ -39,6 +39,7 @@ class Search {
         static thread_local bool followPv;
         static thread_local bool scorePv;
         static thread_local int fifty;
+        static thread_local int staticEvals[maxPly];
 
         static thread_local int playedMoves[maxPly];
         static thread_local int counterMoves[12][64];
